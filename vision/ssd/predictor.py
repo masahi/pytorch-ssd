@@ -147,3 +147,34 @@ class Predictor(nn.Module):
         selected_boxes[:, 2] *= width
         selected_boxes[:, 3] *= height
         return selected_boxes, selected_labels, selected_boxes_prob
+
+
+class PredictorTVM(Predictor):
+    def __init__(
+        self,
+        net,
+        size,
+        mean=0.0,
+        std=1.0,
+        nms_method=None,
+        iou_threshold=0.45,
+        filter_threshold=0.01,
+        candidate_size=200,
+        sigma=0.5,
+        device=None,
+        score_threshold=0.0
+    ):
+        super().__init__(net, size, mean, std, nms_method, iou_threshold, filter_threshold, candidate_size, sigma, device, score_threshold)
+
+    def forward(self, image):
+        height, width, _ = image.shape
+        image = self.transform(image)
+        images = image.unsqueeze(0)
+        images = images.to(self.device)
+
+        selected_boxes, selected_labels, selected_boxes_prob = self.core(images)
+        selected_boxes[:, 0] *= width
+        selected_boxes[:, 1] *= height
+        selected_boxes[:, 2] *= width
+        selected_boxes[:, 3] *= height
+        return selected_boxes, selected_labels, selected_boxes_prob

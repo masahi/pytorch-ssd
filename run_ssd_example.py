@@ -10,47 +10,16 @@ import cv2
 import sys
 
 
-# if len(sys.argv) < 5:
-#     print('Usage: python run_ssd_example.py <net type>  <model path> <label path> <image path>')
-#     sys.exit(0)
-net_type = "mb1-ssd"
 model_path = "models/mobilenet-v1-ssd-mp-0_675.pth"
 label_path = "models/voc-model-labels.txt"
 image_path = "bus.jpg"
 
 class_names = [name.strip() for name in open(label_path).readlines()]
 
-if net_type == 'vgg16-ssd':
-    net = create_vgg_ssd(len(class_names), is_test=True)
-elif net_type == 'mb1-ssd':
-    net = create_mobilenetv1_ssd(len(class_names), is_test=True)
-elif net_type == 'mb1-ssd-lite':
-    net = create_mobilenetv1_ssd_lite(len(class_names), is_test=True)
-elif net_type == 'mb2-ssd-lite':
-    net = create_mobilenetv2_ssd_lite(len(class_names), is_test=True)
-elif net_type == 'mb3-large-ssd-lite':
-    net = create_mobilenetv3_large_ssd_lite(len(class_names), is_test=True)
-elif net_type == 'mb3-small-ssd-lite':
-    net = create_mobilenetv3_small_ssd_lite(len(class_names), is_test=True)
-elif net_type == 'sq-ssd-lite':
-    net = create_squeezenet_ssd_lite(len(class_names), is_test=True)
-else:
-    print("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
-    sys.exit(1)
+net = create_mobilenetv1_ssd(len(class_names), is_test=True)
 net.load(model_path)
 
-if net_type == 'vgg16-ssd':
-    predictor = create_vgg_ssd_predictor(net, candidate_size=200)
-elif net_type == 'mb1-ssd':
-    predictor = create_mobilenetv1_ssd_predictor(net, candidate_size=200, score_threshold=0.4)
-elif net_type == 'mb1-ssd-lite':
-    predictor = create_mobilenetv1_ssd_lite_predictor(net, candidate_size=200)
-elif net_type == 'mb2-ssd-lite' or net_type == "mb3-large-ssd-lite" or net_type == "mb3-small-ssd-lite":
-    predictor = create_mobilenetv2_ssd_lite_predictor(net, candidate_size=200)
-elif net_type == 'sq-ssd-lite':
-    predictor = create_squeezenet_ssd_lite_predictor(net, candidate_size=200)
-else:
-    predictor = create_vgg_ssd_predictor(net, candidate_size=200)
+predictor = create_mobilenetv1_ssd_predictor(net, candidate_size=200, score_threshold=0.4, use_tvm=True)
 
 orig_image = cv2.imread(image_path)
 image = cv2.cvtColor(orig_image, cv2.COLOR_BGR2RGB)
