@@ -73,15 +73,15 @@ while True:
     for i in range(boxes.size(0)):
         box = boxes[i, :]
         label = f"{class_names[labels[i]]}: {probs[i]:.2f}"
-        cv2.rectangle(orig_image, (box[0], box[1]), (box[2], box[3]), (255, 255, 0), 4)
+        # cv2.rectangle(orig_image, (box[0], box[1]), (box[2], box[3]), (255, 255, 0), 4)
 
-        cv2.putText(orig_image, label,
-                    (box[0]+20, box[1]+40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,  # font scale
-                    (255, 0, 255),
-                    2)  # line type
-    cv2.imshow('annotated', orig_image)
+        # cv2.putText(orig_image, label,
+        #             (box[0]+20, box[1]+40),
+        #             cv2.FONT_HERSHEY_SIMPLEX,
+        #             1,  # font scale
+        #             (255, 0, 255),
+        #             2)  # line type
+    # cv2.imshow('annotated', orig_image)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 cap.release()

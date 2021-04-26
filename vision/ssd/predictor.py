@@ -1,4 +1,5 @@
 import torch
+import torchvision
 
 from ..utils import box_utils
 from .data_preprocessing import PredictionTransform
@@ -6,8 +7,19 @@ from ..utils.misc import Timer
 
 
 class Predictor:
-    def __init__(self, net, size, mean=0.0, std=1.0, nms_method=None,
-                 iou_threshold=0.45, filter_threshold=0.01, candidate_size=200, sigma=0.5, device=None):
+    def __init__(
+        self,
+        net,
+        size,
+        mean=0.0,
+        std=1.0,
+        nms_method=None,
+        iou_threshold=0.45,
+        filter_threshold=0.01,
+        candidate_size=200,
+        sigma=0.5,
+        device=None,
+    ):
         self.net = net
         self.transform = PredictionTransform(size, mean, std)
         self.iou_threshold = iou_threshold
@@ -53,19 +65,62 @@ class Predictor:
                 continue
             subset_boxes = boxes[mask, :]
             box_probs = torch.cat([subset_boxes, probs.reshape(-1, 1)], dim=1)
-            box_probs = box_utils.nms(box_probs, self.nms_method,
-                                      score_threshold=prob_threshold,
-                                      iou_threshold=self.iou_threshold,
-                                      sigma=self.sigma,
-                                      top_k=top_k,
-                                      candidate_size=self.candidate_size)
+            box_probs = box_utils.nms(
+                box_probs,
+                self.nms_method,
+                score_threshold=prob_threshold,
+                iou_threshold=self.iou_threshold,
+                sigma=self.sigma,
+                top_k=top_k,
+                candidate_size=self.candidate_size,
+            )
             picked_box_probs.append(box_probs)
             picked_labels.extend([class_index] * box_probs.size(0))
-        if not picked_box_probs:
-            return torch.tensor([]), torch.tensor([]), torch.tensor([])
+
         picked_box_probs = torch.cat(picked_box_probs)
         picked_box_probs[:, 0] *= width
         picked_box_probs[:, 1] *= height
         picked_box_probs[:, 2] *= width
         picked_box_probs[:, 3] *= height
-        return picked_box_probs[:, :4], torch.tensor(picked_labels), picked_box_probs[:, 4]
+        return (
+            picked_box_probs[:, :4],
+            torch.tensor(picked_labels),
+            picked_box_probs[:, 4],
+        )
+
+    def predict2(self, image, top_k=-1, prob_threshold=None):
+        height, width, _ = image.shape
+        image = self.transform(image)
+        images = image.unsqueeze(0)
+        images = images.to(self.device)
+
+        with torch.no_grad():
+            scores, boxes = self.net.forward(images)
+
+        boxes = boxes[0]
+        scores = scores[0]
+
+        scores_single_class, labels = torch.max(scores[:, 1:], dim=1)
+        scores_topk, topk_indices = torch.topk(scores_single_class, self.candidate_size)
+        boxes_topk = boxes[topk_indices]
+        labels_topk = labels[topk_indices]
+
+        mask = scores_topk > prob_threshold
+        boxes_thres = boxes_topk[mask]
+        scores_thres = scores_topk[mask]
+        labels = labels_topk[mask]
+
+        selected_indices = torchvision.ops.batched_nms(
+            boxes_thres[:, :4], scores_thres, labels, self.iou_threshold
+        )
+
+        selected_boxes = boxes_thres[selected_indices, :4]
+        selected_boxes_prob = scores_thres[selected_indices]
+        selected_labels = labels[selected_indices] + 1
+
+        selected_boxes[:, 0] *= width
+        selected_boxes[:, 1] *= height
+        selected_boxes[:, 2] *= width
+        selected_boxes[:, 3] *= height
+
+        return selected_boxes, selected_labels, selected_boxes_prob
