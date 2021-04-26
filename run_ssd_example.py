@@ -24,6 +24,7 @@ predictor = create_mobilenetv1_ssd_predictor(net, candidate_size=200, score_thre
 orig_image = cv2.imread(image_path)
 image = cv2.cvtColor(orig_image, cv2.COLOR_BGR2RGB)
 # boxes, labels, probs = predictor.predict(image, 10, 0.4)
+predictor.compile()
 boxes, labels, probs = predictor(image)
 
 for i in range(boxes.size(0)):

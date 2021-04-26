@@ -2,19 +2,19 @@ import torch
 from torch import nn
 import torchvision
 
+import tvm
+from tvm import relay
+from tvm.runtime.vm import VirtualMachine
+
+import onnx
+
 from ..utils import box_utils
 from .data_preprocessing import PredictionTransform
 from ..utils.misc import Timer
 
 
 class PredictorCore(nn.Module):
-    def __init__(
-        self,
-        net,
-        candidate_size,
-        iou_threshold,
-        score_threshold
-    ):
+    def __init__(self, net, candidate_size, iou_threshold, score_threshold):
         super().__init__()
         self.net = net
         self.candidate_size = candidate_size
@@ -62,7 +62,7 @@ class Predictor(nn.Module):
         candidate_size=200,
         sigma=0.5,
         device=None,
-        score_threshold=0.0
+        score_threshold=0.0,
     ):
         super().__init__()
         self.net = net
@@ -81,7 +81,9 @@ class Predictor(nn.Module):
         self.net.to(self.device)
         self.net.eval()
 
-        self.core = PredictorCore(self.net, candidate_size, iou_threshold, score_threshold)
+        self.core = PredictorCore(
+            self.net, candidate_size, iou_threshold, score_threshold
+        )
 
         self.timer = Timer()
 
@@ -149,6 +151,27 @@ class Predictor(nn.Module):
         return selected_boxes, selected_labels, selected_boxes_prob
 
 
+class RelayModel(nn.Module):
+    def __init__(self, mod, params):
+        super().__init__()
+        target = "llvm"
+
+        with tvm.transform.PassContext(opt_level=3):
+            vm_exec = relay.vm.compile(mod, target=target, params=params)
+
+        ctx = tvm.device(target, 0)
+        self.vm = VirtualMachine(vm_exec, ctx)
+
+    def forward(self, inp):
+        self.vm.set_input("main", **{"input.1": inp.numpy()})
+        tvm_res = self.vm.run()
+        return (
+            torch.from_numpy(tvm_res[0].asnumpy()),
+            torch.from_numpy(tvm_res[1].asnumpy()),
+            torch.from_numpy(tvm_res[2].asnumpy()),
+        )
+
+
 class PredictorTVM(Predictor):
     def __init__(
         self,
@@ -162,9 +185,34 @@ class PredictorTVM(Predictor):
         candidate_size=200,
         sigma=0.5,
         device=None,
-        score_threshold=0.0
+        score_threshold=0.0,
     ):
-        super().__init__(net, size, mean, std, nms_method, iou_threshold, filter_threshold, candidate_size, sigma, device, score_threshold)
+        super().__init__(
+            net,
+            size,
+            mean,
+            std,
+            nms_method,
+            iou_threshold,
+            filter_threshold,
+            candidate_size,
+            sigma,
+            device,
+            score_threshold,
+        )
+
+    def compile(self):
+        dummy_input = torch.randn(1, 3, 300, 300)
+        torch.onnx.export(self.core, dummy_input, "mb1-ssd.onnx", opset_version=11)
+
+        model = onnx.load("mb1-ssd.onnx")
+
+        shape_dict = {"input.1": dummy_input.shape}
+
+        mod, params = relay.frontend.from_onnx(model, shape_dict, freeze_params=True)
+        mod = relay.transform.DynamicToStatic()(mod)
+
+        self.core = RelayModel(mod, params)
 
     def forward(self, image):
         height, width, _ = image.shape
@@ -173,8 +221,10 @@ class PredictorTVM(Predictor):
         images = images.to(self.device)
 
         selected_boxes, selected_labels, selected_boxes_prob = self.core(images)
+
         selected_boxes[:, 0] *= width
         selected_boxes[:, 1] *= height
         selected_boxes[:, 2] *= width
         selected_boxes[:, 3] *= height
+
         return selected_boxes, selected_labels, selected_boxes_prob
