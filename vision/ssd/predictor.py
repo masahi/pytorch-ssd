@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import torchvision
 
 from ..utils import box_utils
@@ -6,7 +7,49 @@ from .data_preprocessing import PredictionTransform
 from ..utils.misc import Timer
 
 
-class Predictor:
+class PredictorCore(nn.Module):
+    def __init__(
+        self,
+        net,
+        candidate_size,
+        iou_threshold,
+        score_threshold
+    ):
+        super().__init__()
+        self.net = net
+        self.candidate_size = candidate_size
+        self.iou_threshold = iou_threshold
+        self.score_threshold = score_threshold
+
+    def forward(self, images):
+        with torch.no_grad():
+            scores, boxes = self.net.forward(images)
+
+        boxes = boxes[0]
+        scores = scores[0]
+
+        scores_single_class, labels = torch.max(scores[:, 1:], dim=1)
+        scores_topk, topk_indices = torch.topk(scores_single_class, self.candidate_size)
+        boxes_topk = boxes[topk_indices]
+        labels_topk = labels[topk_indices]
+
+        mask = scores_topk > self.score_threshold
+        boxes_thres = boxes_topk[mask]
+        scores_thres = scores_topk[mask]
+        labels = labels_topk[mask]
+
+        selected_indices = torchvision.ops.batched_nms(
+            boxes_thres[:, :4], scores_thres, labels, self.iou_threshold
+        )
+
+        selected_boxes = boxes_thres[selected_indices, :4]
+        selected_boxes_prob = scores_thres[selected_indices]
+        selected_labels = labels[selected_indices] + 1
+
+        return selected_boxes, selected_labels, selected_boxes_prob
+
+
+class Predictor(nn.Module):
     def __init__(
         self,
         net,
@@ -19,7 +62,9 @@ class Predictor:
         candidate_size=200,
         sigma=0.5,
         device=None,
+        score_threshold=0.0
     ):
+        super().__init__()
         self.net = net
         self.transform = PredictionTransform(size, mean, std)
         self.iou_threshold = iou_threshold
@@ -35,6 +80,8 @@ class Predictor:
 
         self.net.to(self.device)
         self.net.eval()
+
+        self.core = PredictorCore(self.net, candidate_size, iou_threshold, score_threshold)
 
         self.timer = Timer()
 
@@ -88,39 +135,15 @@ class Predictor:
             picked_box_probs[:, 4],
         )
 
-    def predict2(self, image, top_k=-1, prob_threshold=None):
+    def forward(self, image):
         height, width, _ = image.shape
         image = self.transform(image)
         images = image.unsqueeze(0)
         images = images.to(self.device)
 
-        with torch.no_grad():
-            scores, boxes = self.net.forward(images)
-
-        boxes = boxes[0]
-        scores = scores[0]
-
-        scores_single_class, labels = torch.max(scores[:, 1:], dim=1)
-        scores_topk, topk_indices = torch.topk(scores_single_class, self.candidate_size)
-        boxes_topk = boxes[topk_indices]
-        labels_topk = labels[topk_indices]
-
-        mask = scores_topk > prob_threshold
-        boxes_thres = boxes_topk[mask]
-        scores_thres = scores_topk[mask]
-        labels = labels_topk[mask]
-
-        selected_indices = torchvision.ops.batched_nms(
-            boxes_thres[:, :4], scores_thres, labels, self.iou_threshold
-        )
-
-        selected_boxes = boxes_thres[selected_indices, :4]
-        selected_boxes_prob = scores_thres[selected_indices]
-        selected_labels = labels[selected_indices] + 1
-
+        selected_boxes, selected_labels, selected_boxes_prob = self.core(images)
         selected_boxes[:, 0] *= width
         selected_boxes[:, 1] *= height
         selected_boxes[:, 2] *= width
         selected_boxes[:, 3] *= height
-
         return selected_boxes, selected_labels, selected_boxes_prob
