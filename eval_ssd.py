@@ -132,43 +132,15 @@ if __name__ == '__main__':
         dataset = OpenImagesDataset(args.dataset, dataset_type="test")
 
     true_case_stat, all_gb_boxes, all_difficult_cases = group_annotation_by_class(dataset)
-    if args.net == 'vgg16-ssd':
-        net = create_vgg_ssd(len(class_names), is_test=True)
-    elif args.net == 'mb1-ssd':
-        net = create_mobilenetv1_ssd(len(class_names), is_test=True)
-    elif args.net == 'mb1-ssd-lite':
-        net = create_mobilenetv1_ssd_lite(len(class_names), is_test=True)
-    elif args.net == 'sq-ssd-lite':
-        net = create_squeezenet_ssd_lite(len(class_names), is_test=True)
-    elif args.net == 'mb2-ssd-lite':
-        net = create_mobilenetv2_ssd_lite(len(class_names), width_mult=args.mb2_width_mult, is_test=True)
-    elif args.net == 'mb3-large-ssd-lite':
-        net = create_mobilenetv3_large_ssd_lite(len(class_names), is_test=True)
-    elif args.net == 'mb3-small-ssd-lite':
-        net = create_mobilenetv3_small_ssd_lite(len(class_names), is_test=True)
-    else:
-        logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
-        parser.print_help(sys.stderr)
-        sys.exit(1)
-
+    net = create_mobilenetv1_ssd(len(class_names), is_test=True)
     timer.start("Load Model")
     net.load(args.trained_model)
     net = net.to(DEVICE)
+
     print(f'It took {timer.end("Load Model")} seconds to load the model.')
-    if args.net == 'vgg16-ssd':
-        predictor = create_vgg_ssd_predictor(net, nms_method=args.nms_method, device=DEVICE)
-    elif args.net == 'mb1-ssd':
-        predictor = create_mobilenetv1_ssd_predictor(net, nms_method=args.nms_method, device=DEVICE)
-    elif args.net == 'mb1-ssd-lite':
-        predictor = create_mobilenetv1_ssd_lite_predictor(net, nms_method=args.nms_method, device=DEVICE)
-    elif args.net == 'sq-ssd-lite':
-        predictor = create_squeezenet_ssd_lite_predictor(net,nms_method=args.nms_method, device=DEVICE)
-    elif args.net == 'mb2-ssd-lite' or args.net == "mb3-large-ssd-lite" or args.net == "mb3-small-ssd-lite":
-        predictor = create_mobilenetv2_ssd_lite_predictor(net, nms_method=args.nms_method, device=DEVICE)
-    else:
-        logging.fatal("The net type is wrong. It should be one of vgg16-ssd, mb1-ssd and mb1-ssd-lite.")
-        parser.print_help(sys.stderr)
-        sys.exit(1)
+    # predictor = create_mobilenetv1_ssd_predictor(net, nms_method=args.nms_method, device=DEVICE)
+    predictor = create_mobilenetv1_ssd_predictor(net, candidate_size=200, score_threshold=0.01, use_tvm=True)
+    predictor.compile()
 
     results = []
     for i in range(len(dataset)):
@@ -177,7 +149,7 @@ if __name__ == '__main__':
         image = dataset.get_image(i)
         print("Load Image: {:4f} seconds.".format(timer.end("Load Image")))
         timer.start("Predict")
-        boxes, labels, probs = predictor.predict(image)
+        boxes, labels, probs = predictor(image)
         print("Prediction: {:4f} seconds.".format(timer.end("Predict")))
         indexes = torch.ones(labels.size(0), 1, dtype=torch.float32) * i
         results.append(torch.cat([
